@@ -1,23 +1,24 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   FileJson,
   FileText,
-  Printer,
   CheckCircle,
   ChevronDown,
   ChevronUp,
   Scan,
   Loader2,
   Tractor,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import Uploader from '@/components/Uploader';
 import OCRProgress from '@/components/OCRProgress';
 import ImagePreview from '@/components/ImagePreview';
 import EditableForm from '@/components/EditableForm';
 import VerificationBadge from '@/components/VerificationBadge';
-import InvoiceGenerator from '@/components/InvoiceGenerator';
+import InvoicePreview from '@/components/InvoicePreview';
 import { extractFromDocument, ExtractionResult, buildRegistrationFormData } from '@/services/extractor';
 import { DocumentType, AadhaarFrontData, AadhaarBackData, ChassisData } from '@/types';
 import { RegistrationFormValues } from '@/services/validator';
@@ -47,6 +48,40 @@ export default function Home() {
   const [showInvoice, setShowInvoice] = useState(false);
   const formRef = useRef<HTMLDivElement>(null);
   const invoiceRef = useRef<HTMLDivElement>(null);
+
+  // Track which documents have been processed
+  const documentsProcessed = useMemo(() => ({
+    front: aadhaarFrontResult !== null,
+    back: aadhaarBackResult !== null,
+    chassis: chassisResult !== null,
+  }), [aadhaarFrontResult, aadhaarBackResult, chassisResult]);
+
+  const allCompleted = documentsProcessed.front && documentsProcessed.back && documentsProcessed.chassis;
+  const anyCompleted = documentsProcessed.front || documentsProcessed.back || documentsProcessed.chassis;
+
+  // Auto-build form data whenever any OCR result changes
+  const currentFormDefaults = useMemo(
+    () => buildRegistrationFormData(aadhaarFrontResult, aadhaarBackResult, chassisResult),
+    [aadhaarFrontResult, aadhaarBackResult, chassisResult]
+  );
+
+  // Auto-show form when any document is processed
+  useEffect(() => {
+    if (anyCompleted && !showForm) {
+      setShowForm(true);
+    }
+  }, [anyCompleted, showForm]);
+
+  // Scroll to form when new data comes in
+  useEffect(() => {
+    if (formValues && showForm && formRef.current) {
+      // Only scroll if not already visible
+      const rect = formRef.current.getBoundingClientRect();
+      if (rect.top < 0 || rect.top > window.innerHeight) {
+        formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }, [formValues, showForm]);
 
   const handleFileSelected = useCallback(
     async (file: File, type: DocumentType) => {
@@ -112,6 +147,25 @@ export default function Home() {
     };
   }, [aadhaarFrontResult, aadhaarBackResult, chassisResult]);
 
+  const getExtractedFieldsCount = useCallback((): number => {
+    let count = 0;
+    const vals = formValues;
+    if (!vals) return 0;
+    if (vals.ownerName) count++;
+    if (vals.dob) count++;
+    if (vals.gender) count++;
+    if (vals.aadhaarNumber) count++;
+    if (vals.address) count++;
+    if (vals.village) count++;
+    if (vals.district) count++;
+    if (vals.state) count++;
+    if (vals.pin) count++;
+    if (vals.engineNumber) count++;
+    if (vals.chassisNumber) count++;
+    if (vals.model) count++;
+    return count;
+  }, [formValues]);
+
   const renderOcrResult = (result: ExtractionResult | null, label: string) => {
     if (!result) return null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -161,8 +215,6 @@ export default function Home() {
     URL.revokeObjectURL(url);
   };
 
-  const allCompleted = aadhaarFrontResult && aadhaarBackResult && chassisResult;
-
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-blue-50">
       {/* Header */}
@@ -177,14 +229,19 @@ export default function Home() {
               <p className="text-xs text-gray-500">Aadhaar + Chassis Plate</p>
             </div>
           </div>
-          {allCompleted && (
-            <div className="flex items-center gap-2">
-              <CheckCircle size={20} className="text-green-500" />
-              <span className="text-sm font-medium text-green-600 hidden sm:inline">
-                All Documents Processed
+          <div className="flex items-center gap-3">
+            {allCompleted && (
+              <span className="text-xs font-medium text-green-600 hidden sm:flex items-center gap-1">
+                <CheckCircle size={14} />
+                All Documents
               </span>
-            </div>
-          )}
+            )}
+            {anyCompleted && (
+              <span className="text-xs text-gray-500 hidden sm:inline">
+                {getExtractedFieldsCount()} fields extracted
+              </span>
+            )}
+          </div>
         </div>
       </header>
 
@@ -196,12 +253,13 @@ export default function Home() {
           visible={ocrProgress.visible}
         />
 
-        {/* Upload Sections - 3 only */}
+        {/* Upload Sections */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 bg-blue-500 rounded-full" />
+              <span className={'w-2 h-2 rounded-full ' + (documentsProcessed.front ? 'bg-green-500' : 'bg-blue-500')} />
               <h3 className="font-semibold text-gray-700 text-sm">Aadhaar Card (Front)</h3>
+              {documentsProcessed.front && <CheckCircle size={14} className="text-green-500" />}
             </div>
             <Uploader
               label="Upload Aadhaar Front"
@@ -216,12 +274,19 @@ export default function Home() {
                 Processing...
               </div>
             )}
+            {documentsProcessed.front && (
+              <p className="text-xs text-green-600 font-medium">&#10003; Extracted {(() => {
+                const d = aadhaarFrontResult?.data as AadhaarFrontData | undefined;
+                return [d?.name && 'Name', d?.dob && 'DOB', d?.gender && 'Gender', d?.aadhaarNumber && 'Aadhaar'].filter(Boolean).join(', ');
+              })()}</p>
+            )}
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 bg-green-500 rounded-full" />
+              <span className={'w-2 h-2 rounded-full ' + (documentsProcessed.back ? 'bg-green-500' : 'bg-green-500')} />
               <h3 className="font-semibold text-gray-700 text-sm">Aadhaar Card (Back)</h3>
+              {documentsProcessed.back && <CheckCircle size={14} className="text-green-500" />}
             </div>
             <Uploader
               label="Upload Aadhaar Back"
@@ -236,12 +301,16 @@ export default function Home() {
                 Processing...
               </div>
             )}
+            {documentsProcessed.back && (
+              <p className="text-xs text-green-600 font-medium">&#10003; Address extracted</p>
+            )}
           </div>
 
           <div className="space-y-2">
             <div className="flex items-center gap-2">
-              <span className="w-2 h-2 bg-amber-500 rounded-full" />
+              <span className={'w-2 h-2 rounded-full ' + (documentsProcessed.chassis ? 'bg-green-500' : 'bg-amber-500')} />
               <h3 className="font-semibold text-gray-700 text-sm">Tractor Chassis Plate</h3>
+              {documentsProcessed.chassis && <CheckCircle size={14} className="text-green-500" />}
             </div>
             <Uploader
               label="Upload Chassis Plate"
@@ -256,10 +325,48 @@ export default function Home() {
                 Processing...
               </div>
             )}
+            {documentsProcessed.chassis && (
+              <p className="text-xs text-green-600 font-medium">&#10003; Chassis details extracted</p>
+            )}
           </div>
         </div>
 
-        {/* OCR Results */}
+        {/* Status bar - shows what's been extracted so far */}
+        {anyCompleted && (
+          <div className="bg-blue-50 border border-blue-100 rounded-xl px-4 py-3 text-sm text-blue-800 flex items-center justify-between">
+            <span>
+              <strong>{getExtractedFieldsCount()}</strong> fields extracted from{' '}
+              {[documentsProcessed.front && 'Aadhaar Front', documentsProcessed.back && 'Aadhaar Back', documentsProcessed.chassis && 'Chassis Plate']
+                .filter(Boolean)
+                .join(', ')}
+              . Edit any field manually below.
+            </span>
+            {formValues && (
+              <button
+                onClick={() => setShowInvoice(!showInvoice)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs rounded-lg hover:bg-blue-700 transition-colors ml-3 shrink-0"
+              >
+                {showInvoice ? <EyeOff size={14} /> : <Eye size={14} />}
+                {showInvoice ? 'Hide Invoice' : 'View Invoice'}
+              </button>
+            )}
+          </div>
+        )}
+
+        {/* View Invoice Button (when form has data but invoice not visible) */}
+        {formValues && !showInvoice && !anyCompleted && (
+          <div className="flex justify-center">
+            <button
+              onClick={() => setShowInvoice(true)}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-xl shadow-lg shadow-blue-200 transition-all hover:scale-[1.02] flex items-center gap-2"
+            >
+              <Eye size={18} />
+              View Invoice
+            </button>
+          </div>
+        )}
+
+        {/* OCR Results (collapsible) */}
         {(aadhaarFrontResult || aadhaarBackResult || chassisResult) && (
           <div>
             <button
@@ -267,7 +374,7 @@ export default function Home() {
               className="flex items-center gap-2 text-sm font-semibold text-gray-700 mb-3 hover:text-blue-600 transition-colors"
             >
               <Scan size={16} />
-              OCR Extraction Results
+              OCR Extraction Details
               {previewExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
             </button>
             {previewExpanded && (
@@ -285,7 +392,7 @@ export default function Home() {
           <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
             <h3 className="font-semibold text-gray-800 mb-2 flex items-center gap-2">
               <CheckCircle size={16} className="text-green-500" />
-              Data Verification
+              Chassis Data Extracted
             </h3>
             <div className="space-y-1">
               <VerificationBadge
@@ -302,24 +409,8 @@ export default function Home() {
           </div>
         )}
 
-        {/* Auto-Fill Form Button */}
-        {allCompleted && !showForm && (
-          <div>
-            <button
-              onClick={() => {
-                setShowForm(true);
-                setTimeout(() => formRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-              }}
-              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-xl shadow-lg shadow-blue-200 transition-all hover:scale-[1.01] flex items-center justify-center gap-2"
-            >
-              <Scan size={20} />
-              Auto-Fill Registration Form
-            </button>
-          </div>
-        )}
-
-        {/* Editable Form */}
-        {(showForm || formValues) && (
+        {/* Editable Form - auto-shows after any document processed */}
+        {showForm && (
           <div ref={formRef} className="pt-2">
             <div className="flex items-center justify-between mb-4">
               <h2 className="text-xl font-bold text-gray-800">Registration Form</h2>
@@ -335,33 +426,18 @@ export default function Home() {
               </div>
             </div>
             <EditableForm
-              defaultValues={buildRegistrationFormData(aadhaarFrontResult, aadhaarBackResult, chassisResult)}
+              key={JSON.stringify(currentFormDefaults)}
+              defaultValues={currentFormDefaults}
               fieldConfidence={getAllFieldConfidence()}
               onValuesChange={(values) => setFormValues(values)}
             />
           </div>
         )}
 
-        {/* Generate Invoice Button */}
-        {formValues && !showInvoice && (
-          <div>
-            <button
-              onClick={() => {
-                setShowInvoice(true);
-                setTimeout(() => invoiceRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
-              }}
-              className="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-xl shadow-lg shadow-green-200 transition-all hover:scale-[1.01] flex items-center justify-center gap-2"
-            >
-              <FileText size={20} />
-              Generate Invoice
-            </button>
-          </div>
-        )}
-
-        {/* Invoice Generator */}
+        {/* Invoice Preview - live, always up-to-date */}
         {showInvoice && formValues && (
           <div ref={invoiceRef} className="pt-2">
-            <InvoiceGenerator data={formValues} />
+            <InvoicePreview data={formValues} />
           </div>
         )}
 
