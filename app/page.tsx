@@ -46,6 +46,7 @@ export default function Home() {
   const [previewExpanded, setPreviewExpanded] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showInvoice, setShowInvoice] = useState(false);
+  const [formResetKey, setFormResetKey] = useState(0);
   const formRef = useRef<HTMLDivElement>(null);
   const invoiceRef = useRef<HTMLDivElement>(null);
 
@@ -58,6 +59,19 @@ export default function Home() {
 
   const allCompleted = documentsProcessed.front && documentsProcessed.back && documentsProcessed.chassis;
   const anyCompleted = documentsProcessed.front || documentsProcessed.back || documentsProcessed.chassis;
+
+  // Track OCR result versions to reset form only when new OCR data arrives
+  const ocrVersion = useMemo(
+    () => (aadhaarFrontResult?.text || '') + (aadhaarBackResult?.text || '') + (chassisResult?.text || ''),
+    [aadhaarFrontResult, aadhaarBackResult, chassisResult]
+  );
+
+  // Increment reset key when OCR results change (not on user edits)
+  useEffect(() => {
+    if (ocrVersion) {
+      setFormResetKey((k) => k + 1);
+    }
+  }, [ocrVersion]);
 
   // Auto-build form data whenever any OCR result changes
   const currentFormDefaults = useMemo(
@@ -426,7 +440,7 @@ export default function Home() {
               </div>
             </div>
             <EditableForm
-              key={JSON.stringify(currentFormDefaults)}
+              key={formResetKey}
               defaultValues={currentFormDefaults}
               fieldConfidence={getAllFieldConfidence()}
               onValuesChange={(values) => setFormValues(values)}
